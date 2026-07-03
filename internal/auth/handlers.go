@@ -10,20 +10,20 @@ import (
 )
 
 type Handlers struct {
-	cfg             *config.Config
-	jwtIssuer       *JWTIssuer
-	refreshStore    *RefreshStore
-	steamVerifier   *SteamOpenIDVerifier
-	allowedProxyIPs map[string]struct{} // читается из server_config, может быть nil
+	cfg           *config.Config
+	jwtIssuer     *JWTIssuer
+	refreshStore  *RefreshStore
+	steamVerifier *SteamOpenIDVerifier
+	proxyIPStore  *ProxyIPStore // рантайм allow-list доверенных reverse-proxy IP, хранится в SQLite
 }
 
-func NewHandlers(cfg *config.Config, jwtIssuer *JWTIssuer, refreshStore *RefreshStore, steamVerifier *SteamOpenIDVerifier, allowedProxyIPs map[string]struct{}) *Handlers {
+func NewHandlers(cfg *config.Config, jwtIssuer *JWTIssuer, refreshStore *RefreshStore, steamVerifier *SteamOpenIDVerifier, proxyIPStore *ProxyIPStore) *Handlers {
 	return &Handlers{
-		cfg:             cfg,
-		jwtIssuer:       jwtIssuer,
-		refreshStore:    refreshStore,
-		steamVerifier:   steamVerifier,
-		allowedProxyIPs: allowedProxyIPs,
+		cfg:           cfg,
+		jwtIssuer:     jwtIssuer,
+		refreshStore:  refreshStore,
+		steamVerifier: steamVerifier,
+		proxyIPStore:  proxyIPStore,
 	}
 }
 
@@ -60,7 +60,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	SetRefreshCookie(w, r, rawRefresh, h.allowedProxyIPs)
+	SetRefreshCookie(w, r, rawRefresh, h.proxyIPAllowlist())
 
 	accessToken, err := h.jwtIssuer.IssueAccessToken(steamID)
 	if err != nil {
@@ -98,7 +98,7 @@ func (h *Handlers) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	SetRefreshCookie(w, r, newRawRefresh, h.allowedProxyIPs)
+	SetRefreshCookie(w, r, newRawRefresh, h.proxyIPAllowlist())
 
 	accessToken, err := h.jwtIssuer.IssueAccessToken(steamID)
 	if err != nil {
@@ -116,9 +116,8 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleMe — защищённый эндпоинт (монтируется через RequireAuth в main.go),
-// подтверждает клиенту, что access token валиден, и возвращает SteamID.
-// Существует отдельно от отладочного /api/ping из main.go: /api/ping — временный
-// пример защищённого маршрута, /auth/me — часть auth-контракта для фронта.
+// подтверждает клиенту, что access token валиден, и возвращает SteamID + признак
+// root-доступа (нужен фронту, чтобы решить, показывать ли вкладку "Настройки").
 func (h *Handlers) HandleMe(w http.ResponseWriter, r *http.Request) {
 	steamID, ok := SteamIDFromContext(r.Context())
 	if !ok {
@@ -127,5 +126,41 @@ func (h *Handlers) HandleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"steam_id": steamID})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"steam_id": steamID,
+		"is_root":  steamID == h.cfg.RootSteamID,
+	})
+}
+
+// HandleGetAdminConfig — root-only, возвращает текущий allowed_proxy_ip.
+func (h *Handlers) HandleGetAdminConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"allowed_proxy_ip": h.proxyIPStore.GetList(),
+	})
+}
+
+// HandleSetAdminConfig — root-only, перезаписывает allowed_proxy_ip и применяет
+// изменение немедленно (без рестарта сервера).
+func (h *Handlers) HandleSetAdminConfig(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		AllowedProxyIP []string `json:"allowed_proxy_ip"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "невалидный JSON", http.StatusBadRequest)
+		return
+	}
+	if err := h.proxyIPStore.Set(body.AllowedProxyIP); err != nil {
+		log.Printf("set proxy ip config failed: %v", err)
+		http.Error(w, "не удалось сохранить настройки", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handlers) proxyIPAllowlist() map[string]struct{} {
+	if h.proxyIPStore == nil {
+		return nil
+	}
+	return h.proxyIPStore.Get()
 }

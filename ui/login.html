@@ -2,94 +2,182 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <title>Intact-CS-Map — вход</title>
+  <title>Intact-CS-Map</title>
   <style>
-    body { font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1b1e23; color: #eee; }
-    .card { background: #24282f; padding: 2rem 3rem; border-radius: 8px; text-align: center; }
-    .steam-btn { display: inline-block; margin-top: 1rem; padding: 0.75rem 1.5rem; background: #1b2838; color: #fff; text-decoration: none; border-radius: 4px; font-weight: bold; }
+    body { font-family: sans-serif; margin: 0; min-height: 100vh; background: #1b1e23; color: #eee; display: flex; align-items: center; justify-content: center; }
+    .card { background: #24282f; padding: 2rem 3rem; border-radius: 8px; text-align: center; min-width: 320px; }
+    .steam-btn { display: inline-block; margin-top: 1rem; padding: 0.75rem 1.5rem; background: #1b2838; color: #fff; text-decoration: none; border-radius: 4px; font-weight: bold; border: none; cursor: pointer; font-size: 1rem; }
     .steam-btn:hover { background: #2a475e; }
     #status { margin-top: 1rem; font-size: 0.9rem; color: #999; }
+
+    /* --- Авторизованный вид: TabSelector, минимально функционально --- */
+    .app { display: none; width: 480px; max-width: 90vw; }
+    .tabs { display: flex; border-bottom: 1px solid #333; margin-bottom: 1rem; }
+    .tab-btn { flex: 1; background: none; border: none; color: #999; padding: 0.75rem; cursor: pointer; font-size: 0.95rem; border-bottom: 2px solid transparent; }
+    .tab-btn.active { color: #fff; border-bottom-color: #2a475e; }
+    .tab-panel { display: none; text-align: left; padding: 0 0.5rem; }
+    .tab-panel.active { display: block; }
+    .field { margin-bottom: 1rem; }
+    .field label { display: block; margin-bottom: 0.3rem; font-size: 0.85rem; color: #aaa; }
+    .field input { width: 100%; box-sizing: border-box; padding: 0.5rem; background: #1b1e23; border: 1px solid #333; color: #eee; border-radius: 4px; }
+    .field small { color: #777; display: block; margin-top: 0.3rem; }
+    .footer-bar { margin-top: 1.5rem; border-top: 1px solid #333; padding-top: 1rem; }
+    .save-status { font-size: 0.85rem; margin-top: 0.5rem; min-height: 1.2em; }
   </style>
 </head>
 <body>
-  <div class="card">
+  <div id="loginCard" class="card">
     <h1>Intact-CS-Map</h1>
     <p>Доступ только для тренерского штаба.</p>
     <a id="loginBtn" class="steam-btn" href="/auth/login">Войти через Steam</a>
-    <button id="logoutBtn" class="steam-btn" style="display:none; border:none; cursor:pointer;">Выйти</button>
     <div id="status"></div>
   </div>
 
-  <script>
-    const statusEl = document.getElementById('status');
-    const loginBtn = document.getElementById('loginBtn');
-    const logoutBtn = document.getElementById('logoutBtn');
+  <div id="app" class="card app">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="profile">Профиль</button>
+      <button id="settingsTabBtn" class="tab-btn" data-tab="settings" style="display:none;">Настройки</button>
+    </div>
 
-    function showLoggedIn(steamID) {
-      loginBtn.style.display = 'none';
-      logoutBtn.style.display = 'inline-block';
-      statusEl.textContent = 'Вход выполнен. SteamID: ' + steamID;
+    <div id="profileTab" class="tab-panel active">
+      <p>SteamID: <span id="steamIdValue">—</span></p>
+      <p style="color:#999; font-size:0.85rem;">Основной функционал (карта, разбор демок) появится здесь позже.</p>
+    </div>
+
+    <div id="settingsTab" class="tab-panel">
+      <div class="field">
+        <label for="proxyIpInput">Разрешённые IP reverse-proxy</label>
+        <input id="proxyIpInput" type="text" placeholder="10.0.0.5, 10.0.0.6" />
+        <small>Через запятую. Запросы с этих IP считаются доверенными для заголовка X-Forwarded-Proto (см. README, раздел «TLS и Secure cookie»).</small>
+      </div>
+      <button id="saveConfigBtn" class="steam-btn">Сохранить</button>
+      <div id="saveStatus" class="save-status"></div>
+    </div>
+
+    <div class="footer-bar">
+      <button id="logoutBtn" class="steam-btn">Выйти</button>
+    </div>
+  </div>
+
+  <script>
+    const loginCard = document.getElementById('loginCard');
+    const app = document.getElementById('app');
+    const statusEl = document.getElementById('status');
+    const steamIdValue = document.getElementById('steamIdValue');
+    const settingsTabBtn = document.getElementById('settingsTabBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const proxyIpInput = document.getElementById('proxyIpInput');
+    const saveConfigBtn = document.getElementById('saveConfigBtn');
+    const saveStatus = document.getElementById('saveStatus');
+
+    // --- TabSelector: минимальная реализация, без анимаций/дизайна ---
+    document.querySelectorAll('.tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(btn.dataset.tab + 'Tab').classList.add('active');
+      });
+    });
+
+    function showLoggedIn(steamID, isRoot) {
+      loginCard.style.display = 'none';
+      app.style.display = 'block';
+      steamIdValue.textContent = steamID;
+      settingsTabBtn.style.display = isRoot ? 'block' : 'none';
+      if (isRoot) loadAdminConfig();
     }
 
     function showLoggedOut(message) {
-      loginBtn.style.display = 'inline-block';
-      logoutBtn.style.display = 'none';
+      loginCard.style.display = 'block';
+      app.style.display = 'none';
       statusEl.textContent = message || '';
+      window.__accessToken = null;
     }
 
-    // Пример обёртки для будущих API-запросов: перехватывает 401 с
-    // X-Token-Refresh-Required и повторяет запрос после /auth/refresh.
+    // Перехватывает 401 с X-Token-Refresh-Required и повторяет запрос после /auth/refresh.
+    // 403 не перехватывается здесь намеренно — это финальный отказ (см. RequireAuth),
+    // повторный refresh его не исправит.
     async function authorizedFetch(url, options = {}) {
       options.headers = Object.assign({}, options.headers, {
         'Authorization': 'Bearer ' + (window.__accessToken || '')
       });
       let res = await fetch(url, options);
       if (res.status === 401 && res.headers.get('X-Token-Refresh-Required') === 'true') {
-        const refreshRes = await fetch('/auth/refresh', { method: 'POST', credentials: 'include' });
-        if (!refreshRes.ok) {
-          return res; // рефреш тоже не удался — сессия действительно кончилась
-        }
-        const { access_token } = await refreshRes.json();
-        window.__accessToken = access_token;
-        options.headers['Authorization'] = 'Bearer ' + access_token;
+        const refreshed = await tryRefresh();
+        if (!refreshed) return res;
+        options.headers['Authorization'] = 'Bearer ' + window.__accessToken;
         res = await fetch(url, options);
       }
       return res;
     }
     window.authorizedFetch = authorizedFetch;
 
-    async function confirmSession() {
-      if (!window.__accessToken) {
+    // Пытается восстановить сессию по httpOnly refresh-cookie (не требует токена в памяти —
+    // именно поэтому это работает и при обычной перезагрузке страницы).
+    async function tryRefresh() {
+      const res = await fetch('/auth/refresh', { method: 'POST', credentials: 'include' });
+      if (!res.ok) return false;
+      const { access_token } = await res.json();
+      window.__accessToken = access_token;
+      return true;
+    }
+
+    // Bootstrap при загрузке страницы. Порядок:
+    //   1) если в URL-фрагменте есть свежий access_token (редирект от /auth/callback) — используем его;
+    //   2) иначе пробуем /auth/refresh по cookie (случай: обычная перезагрузка страницы);
+    //   3) в любом случае подтверждаем сессию через /auth/me — 401 -> экран логина,
+    //      403 -> экран "доступ запрещён" (валидный токен/сессия, но SteamID не в allow-list).
+    async function bootstrap() {
+      const hash = window.location.hash;
+      if (hash.startsWith('#access_token=')) {
+        window.__accessToken = decodeURIComponent(hash.substring('#access_token='.length));
+        history.replaceState(null, '', window.location.pathname);
+      } else if (!window.__accessToken) {
+        await tryRefresh(); // ok если не удалось — /auth/me ниже всё равно вернёт 401 и покажет логин
+      }
+
+      const res = await fetch('/auth/me', {
+        headers: { 'Authorization': 'Bearer ' + (window.__accessToken || '') }
+      });
+
+      if (res.status === 403) {
+        showLoggedOut('Доступ запрещён: SteamID не в списке допуска.');
+        return;
+      }
+      if (!res.ok) {
         showLoggedOut('');
         return;
       }
-      const res = await authorizedFetch('/auth/me');
-      if (!res.ok) {
-        showLoggedOut('Сессия недействительна, войдите заново.');
-        window.__accessToken = null;
-        return;
-      }
-      const { steam_id } = await res.json();
-      showLoggedIn(steam_id);
+
+      const { steam_id, is_root } = await res.json();
+      showLoggedIn(steam_id, is_root);
     }
 
     logoutBtn.addEventListener('click', async () => {
       await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
-      window.__accessToken = null;
       showLoggedOut('Вы вышли.');
     });
 
-    // После редиректа от /auth/callback access token приходит в URL-фрагменте
-    // (#access_token=...), а не в query — так он не попадёт в server-логи/Referer.
-    (function () {
-      const hash = window.location.hash;
-      if (hash.startsWith('#access_token=')) {
-        const token = decodeURIComponent(hash.substring('#access_token='.length));
-        window.__accessToken = token;
-        history.replaceState(null, '', window.location.pathname); // убрать токен из адресной строки
-      }
-      confirmSession();
-    })();
+    async function loadAdminConfig() {
+      const res = await authorizedFetch('/admin/config');
+      if (!res.ok) return;
+      const { allowed_proxy_ip } = await res.json();
+      proxyIpInput.value = (allowed_proxy_ip || []).join(', ');
+    }
+
+    saveConfigBtn.addEventListener('click', async () => {
+      const ips = proxyIpInput.value.split(',').map((s) => s.trim()).filter(Boolean);
+      saveStatus.textContent = 'Сохранение...';
+      const res = await authorizedFetch('/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allowed_proxy_ip: ips })
+      });
+      saveStatus.textContent = res.ok ? 'Сохранено.' : 'Ошибка сохранения.';
+    });
+
+    bootstrap();
   </script>
 </body>
 </html>

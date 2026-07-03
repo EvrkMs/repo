@@ -38,24 +38,28 @@ func main() {
 	jwtIssuer := auth.NewJWTIssuer(priv, pub, 15*time.Minute)
 	refreshStore := auth.NewRefreshStore(database, 24*time.Hour)
 	steamVerifier := auth.NewSteamOpenIDVerifier()
+	proxyIPStore, err := auth.NewProxyIPStore(database)
+	if err != nil {
+		log.Fatalf("proxy IP store: %v", err)
+	}
 
-	// allowedProxyIPs пока nil — читается из server_config, когда появится
-	// панель настроек (вне скоупа текущего плана).
-	handlers := auth.NewHandlers(cfg, jwtIssuer, refreshStore, steamVerifier, nil)
+	handlers := auth.NewHandlers(cfg, jwtIssuer, refreshStore, steamVerifier, proxyIPStore)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /auth/login", handlers.HandleLogin)
 	mux.HandleFunc("GET /auth/callback", handlers.HandleCallback)
 	mux.HandleFunc("POST /auth/refresh", handlers.HandleRefresh)
 	mux.HandleFunc("POST /auth/logout", handlers.HandleLogout)
-	mux.Handle("GET /auth/me", auth.RequireAuth(jwtIssuer)(http.HandlerFunc(handlers.HandleMe)))
+	mux.Handle("GET /auth/me", auth.RequireAuth(jwtIssuer, cfg)(http.HandlerFunc(handlers.HandleMe)))
+	mux.Handle("GET /admin/config", auth.RequireRoot(jwtIssuer, cfg)(http.HandlerFunc(handlers.HandleGetAdminConfig)))
+	mux.Handle("POST /admin/config", auth.RequireRoot(jwtIssuer, cfg)(http.HandlerFunc(handlers.HandleSetAdminConfig)))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "./ui/login.html")
 	})
 
 	// Пример защищённого маршрута — реальные маршруты добавятся вместе
 	// с остальными подсистемами (парсер, WebSocket и т.д.).
-	protected := auth.RequireAuth(jwtIssuer)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	protected := auth.RequireAuth(jwtIssuer, cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		steamID, _ := auth.SteamIDFromContext(r.Context())
 		w.Write([]byte("OK, привет, " + steamID))
 	}))
