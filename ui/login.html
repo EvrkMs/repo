@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>Intact-CS-Map — вход</title>
+  <style>
+    body { font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1b1e23; color: #eee; }
+    .card { background: #24282f; padding: 2rem 3rem; border-radius: 8px; text-align: center; }
+    .steam-btn { display: inline-block; margin-top: 1rem; padding: 0.75rem 1.5rem; background: #1b2838; color: #fff; text-decoration: none; border-radius: 4px; font-weight: bold; }
+    .steam-btn:hover { background: #2a475e; }
+    #status { margin-top: 1rem; font-size: 0.9rem; color: #999; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Intact-CS-Map</h1>
+    <p>Доступ только для тренерского штаба.</p>
+    <a id="loginBtn" class="steam-btn" href="/auth/login">Войти через Steam</a>
+    <button id="logoutBtn" class="steam-btn" style="display:none; border:none; cursor:pointer;">Выйти</button>
+    <div id="status"></div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+
+    function showLoggedIn(steamID) {
+      loginBtn.style.display = 'none';
+      logoutBtn.style.display = 'inline-block';
+      statusEl.textContent = 'Вход выполнен. SteamID: ' + steamID;
+    }
+
+    function showLoggedOut(message) {
+      loginBtn.style.display = 'inline-block';
+      logoutBtn.style.display = 'none';
+      statusEl.textContent = message || '';
+    }
+
+    // Пример обёртки для будущих API-запросов: перехватывает 401 с
+    // X-Token-Refresh-Required и повторяет запрос после /auth/refresh.
+    async function authorizedFetch(url, options = {}) {
+      options.headers = Object.assign({}, options.headers, {
+        'Authorization': 'Bearer ' + (window.__accessToken || '')
+      });
+      let res = await fetch(url, options);
+      if (res.status === 401 && res.headers.get('X-Token-Refresh-Required') === 'true') {
+        const refreshRes = await fetch('/auth/refresh', { method: 'POST', credentials: 'include' });
+        if (!refreshRes.ok) {
+          return res; // рефреш тоже не удался — сессия действительно кончилась
+        }
+        const { access_token } = await refreshRes.json();
+        window.__accessToken = access_token;
+        options.headers['Authorization'] = 'Bearer ' + access_token;
+        res = await fetch(url, options);
+      }
+      return res;
+    }
+    window.authorizedFetch = authorizedFetch;
+
+    async function confirmSession() {
+      if (!window.__accessToken) {
+        showLoggedOut('');
+        return;
+      }
+      const res = await authorizedFetch('/auth/me');
+      if (!res.ok) {
+        showLoggedOut('Сессия недействительна, войдите заново.');
+        window.__accessToken = null;
+        return;
+      }
+      const { steam_id } = await res.json();
+      showLoggedIn(steam_id);
+    }
+
+    logoutBtn.addEventListener('click', async () => {
+      await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+      window.__accessToken = null;
+      showLoggedOut('Вы вышли.');
+    });
+
+    // После редиректа от /auth/callback access token приходит в URL-фрагменте
+    // (#access_token=...), а не в query — так он не попадёт в server-логи/Referer.
+    (function () {
+      const hash = window.location.hash;
+      if (hash.startsWith('#access_token=')) {
+        const token = decodeURIComponent(hash.substring('#access_token='.length));
+        window.__accessToken = token;
+        history.replaceState(null, '', window.location.pathname); // убрать токен из адресной строки
+      }
+      confirmSession();
+    })();
+  </script>
+</body>
+</html>
