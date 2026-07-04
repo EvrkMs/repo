@@ -48,6 +48,24 @@ curl -i http://localhost:8080/auth/login
 
 Открой `http://localhost:8080/` в браузере — страница логина, кнопка "Войти через Steam".
 
+## 5. React-каркас /demo-map
+
+`ui/demo-map/dist/` уже собран и закоммичен, и встраивается в бинарник через `go:embed` (`ui/embed.go`) — при `go build`/`go run` получаешь один файл, который отдаёт и `/` (login.html), и `/demo-map/*` без необходимости держать папку `ui/` рядом с бинарником при развёртывании.
+
+Если хочешь менять исходники (`ui/demo-map/src/`) и пересобирать:
+
+```bash
+cd ui/demo-map
+npm install   # node_modules не входит в архив
+npm run dev   # локальная разработка с hot reload на localhost:5173
+npm run build # пересобрать dist/ — эти файлы go:embed вкомпилирует при следующей go build
+```
+
+**Важно:** после `npm run build` нужно заново собрать Go-бинарник (`go build ./cmd/server`) — `go:embed` встраивает содержимое `dist/` на момент компиляции, а не читает его в рантайме.
+
+Это пока каркас на мок-данных (`src/mockData.js`) — синтетические траектории 10 игроков, свободное рисование поверх канваса (react-konva). Реальные данные из демок и WebSocket-синк между экранами — следующие шаги, см. `docs/specs/` (появятся design-доки по мере реализации).
+
 ## Что дальше
 
-Список открытых задач вне скоупа auth-подсистемы — в конце `docs/specs/2026-07-02-auth-design.md` (раздел «Вне скоупа») и в implementation plan (раздел Self-Review): панель управления `allowed_proxy_ip`, логирование security-событий в постоянное хранилище, остальные бизнес-эндпоинты (parser, WebSocket, demo storage).
+Список открытых задач вне скоупа auth-подсистемы — в конце `docs/specs/2026-07-02-auth-design.md` (раздел «Вне скоупа») и в implementation plan (раздел Self-Review): панель управления `allowed_proxy_ip` (реализована, см. `/admin/config`), логирование security-событий в постоянное хранилище, парсер демок (`internal/parser`), WebSocket-синк рисования (`internal/websocket`), интеграция реальных данных в `/demo-map`.
+

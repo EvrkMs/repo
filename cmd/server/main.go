@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"log"
 	"net/http"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"intact-cs-map/internal/auth"
 	"intact-cs-map/internal/config"
 	"intact-cs-map/internal/db"
+	"intact-cs-map/ui"
 )
 
 func main() {
@@ -54,8 +56,26 @@ func main() {
 	mux.Handle("GET /admin/config", auth.RequireRoot(jwtIssuer, cfg)(http.HandlerFunc(handlers.HandleGetAdminConfig)))
 	mux.Handle("POST /admin/config", auth.RequireRoot(jwtIssuer, cfg)(http.HandlerFunc(handlers.HandleSetAdminConfig)))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "./ui/login.html")
+		data, err := ui.FS.ReadFile("login.html")
+		if err != nil {
+			http.Error(w, "внутренняя ошибка", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(data)
 	})
+
+	// /demo-map/* — статика React-каркаса, встроенная в бинарник (см. ui/embed.go).
+	// Раздаётся публично (как и login.html): обычная навигация браузера не может
+	// нести Authorization-заголовок, поэтому авторизацию сама SPA делает на клиенте
+	// (тот же bootstrap: /auth/refresh по cookie -> /auth/me), редиректя на / при
+	// отсутствии сессии. Реальные данные — когда появится API парсера — будут
+	// закрыты RequireAuth отдельно.
+	demoMapFS, err := fs.Sub(ui.FS, "demo-map/dist")
+	if err != nil {
+		log.Fatalf("встроенные файлы demo-map: %v", err)
+	}
+	mux.Handle("GET /demo-map/", http.StripPrefix("/demo-map/", http.FileServer(http.FS(demoMapFS))))
 
 	// Пример защищённого маршрута — реальные маршруты добавятся вместе
 	// с остальными подсистемами (парсер, WebSocket и т.д.).
